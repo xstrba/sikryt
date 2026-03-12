@@ -1,0 +1,61 @@
+services:
+  db:
+    profiles:
+      - dev
+    image: postgres:15-alpine
+    container_name: sikryt_db
+    environment:
+      POSTGRES_USER: sikryt
+      POSTGRES_PASSWORD: sikryt_password
+      POSTGRES_DB: sikryt_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  app:
+    profiles:
+      - dev
+    build:
+      context: ./app
+      dockerfile: Dockerfile.dev
+    container_name: sikryt_app
+    environment:
+      - MANAGER_ONLY=true
+      - DATABASE_URL=postgresql://sikryt:sikryt_password@db:5432/sikryt_dev
+      - NODE_ENV=development
+      - AUTH_SECRET=DPSdIx7f/m3je4bmJnpDGFo0ydeQR3cSp1LruAvrt+k=
+    ports:
+      - "3000:3000"
+      - "5555:5555"
+    volumes:
+      - ./app:/app
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - db
+    restart: unless-stopped
+
+  app-prod:
+    profiles:
+      - prod
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    container_name: sikryt_app_prod
+    environment:
+      - MANAGER_ONLY=true
+      - AUTH_SECRET=DPSdIx7f/m3je4bmJnpDGFo0ydeQR3cSp1LruAvrt+k=
+      - AUTH_TRUST_HOST=true
+      - AUTH_URL=http://localhost:3000
+    ports:
+      - "3000:3000"
+      - "5555:5555"
+    volumes:
+      - prod_pgdata:/var/lib/postgresql/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  prod_pgdata:
