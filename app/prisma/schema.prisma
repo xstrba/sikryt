@@ -1,0 +1,66 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+model Directory {
+  id        String      @id @default(cuid())
+  name      String
+  parentId  String?
+  parent    Directory?  @relation("DirectoryToDirectory", fields: [parentId], references: [id], onDelete: Cascade)
+  children  Directory[] @relation("DirectoryToDirectory")
+  secrets   Secret[]
+  assignedToUsers User[] @relation("UserDirectories")
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  @@unique([name, parentId])
+}
+
+model Secret {
+  id          String          @id @default(cuid())
+  name        String
+  directoryId String?
+  isConfig    Boolean         @default(false)
+  directory   Directory?      @relation(fields: [directoryId], references: [id], onDelete: Cascade)
+  versions    SecretVersion[]
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  @@unique([name, directoryId])
+}
+
+model SecretVersion {
+  id         String   @id         // Docker Secret ID
+  secretId   String
+  secret     Secret   @relation(fields: [secretId], references: [id], onDelete: Cascade)
+  version    Int                  // 0 = initial (no suffix), 1 = --v1, 2 = --v2 …
+  dockerName String               // full docker secret name, e.g. production__api__KEY--v1
+  createdAt  DateTime @default(now())
+
+  @@unique([secretId, version])
+}
+
+model User {
+  id                  String      @id @default(cuid())
+  email               String      @unique
+  nickname            String      @unique
+  password            String      // Hashed password
+  name                String?
+  role                Role        @default(USER)
+  assignedDirectories Directory[] @relation("UserDirectories")
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+}

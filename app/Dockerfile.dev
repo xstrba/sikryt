@@ -1,0 +1,19 @@
+FROM node:24-alpine
+
+WORKDIR /app
+
+# Copy manifests first so Docker can cache the install layer
+COPY package.json package-lock.json* ./
+
+# This layer is used for caching — it also pre-seeds the node_modules
+# layer for volume initialization, but the CMD re-runs npm install
+# to ensure the anonymous /app/node_modules volume is always current.
+RUN npm install --legacy-peer-deps
+
+EXPOSE 3000
+EXPOSE 5555
+
+ENV PORT 3000
+ENV HOSTNAME 0.0.0.0
+
+CMD ["sh", "-c", "node_modules/.bin/prisma generate && npm run dev"]
