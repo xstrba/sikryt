@@ -26,6 +26,7 @@ services:
       - DATABASE_URL=postgresql://sikryt:sikryt_password@db:5432/sikryt_dev
       - NODE_ENV=development
       - AUTH_SECRET=DPSdIx7f/m3je4bmJnpDGFo0ydeQR3cSp1LruAvrt+k=
+      - SYNC_INTERVAL=1
     ports:
       - "3000:3000"
       - "5555:5555"
