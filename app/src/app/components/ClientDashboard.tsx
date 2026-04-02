@@ -1,11 +1,12 @@
 'use client'
 
-import { useState, useMemo } from 'react';
-import { createDirectory, createSecret, deleteDirectory, deleteSecret } from '@/lib/actions';
+import { useState, useMemo, useRef, useCallback } from 'react';
+import { createDirectory, createSecret, deleteDirectory, deleteSecret, reorderDirectories } from '@/lib/actions';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useUI } from '../providers';
 import CodeView from './CodeView';
+import { RevealModal } from './RevealModal';
 
 // dbSecrets: Secret[] with versions: SecretVersion[] (from Prisma)
 export default function ClientDashboard({ directories, dbSecrets, currentDirId, canManage = true }: any) {
@@ -23,6 +24,17 @@ export default function ClientDashboard({ directories, dbSecrets, currentDirId, 
     const [showDirs, setShowDirs] = useState(true);
     const [showConfigs, setShowConfigs] = useState(true);
     const [showSecrets, setShowSecrets] = useState(true);
+
+    // Drag-and-drop state
+    const [localDirs, setLocalDirs] = useState<any[]>([]);
+    const [draggingId, setDraggingId] = useState<string | null>(null);
+    const [dragOverId, setDragOverId] = useState<string | null>(null);
+    const [isSavingOrder, setIsSavingOrder] = useState(false);
+    const dragItem = useRef<string | null>(null);
+    const dragFromIndex = useRef<number | null>(null);
+
+    // Reveal modal state (used for preview from listing)
+    const [revealVersion, setRevealVersion] = useState<any | null>(null);
 
     const { confirm, toast } = useUI();
 
@@ -43,6 +55,11 @@ export default function ClientDashboard({ directories, dbSecrets, currentDirId, 
 
         return { dirTree: dTree, secretsByDir: sByDir };
     }, [directories, dbSecrets]);
+
+    // Sync localDirs with dirTree whenever dirTree changes
+    useMemo(() => {
+        setLocalDirs(dirTree[currentDirId] || []);
+    }, [dirTree, currentDirId]);
 
     const handleCreateDir = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -132,14 +149,76 @@ export default function ClientDashboard({ directories, dbSecrets, currentDirId, 
         return path;
     };
 
+    // ── Drag-and-drop handlers ──────────────────────────────────────────────
+
+    const handleDragStart = useCallback((e: React.DragEvent, id: string, index: number) => {
+        dragItem.current = id;
+        dragFromIndex.current = index;
+        setDraggingId(id);
+        e.dataTransfer.effectAllowed = 'move';
+    }, []);
+
+    const handleDragOver = useCallback((e: React.DragEvent, id: string) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        if (dragItem.current !== id) setDragOverId(id);
+    }, []);
+
+    const handleDragLeave = useCallback(() => {
+        setDragOverId(null);
+    }, []);
+
+    const handleDrop = useCallback((e: React.DragEvent, targetId: string, targetIndex: number) => {
+        e.preventDefault();
+        if (!dragItem.current || dragItem.current === targetId) {
+            setDraggingId(null);
+            setDragOverId(null);
+            return;
+        }
+        setLocalDirs(prev => {
+            const next = [...prev];
+            const fromIdx = next.findIndex(d => d.id === dragItem.current);
+            if (fromIdx === -1) return prev;
+            const [moved] = next.splice(fromIdx, 1);
+            next.splice(targetIndex, 0, moved);
+            return next;
+        });
+        setDraggingId(null);
+        setDragOverId(null);
+    }, []);
+
+    const handleDragEnd = useCallback(async () => {
+        setDraggingId(null);
+        setDragOverId(null);
+        dragItem.current = null;
+        dragFromIndex.current = null;
+
+        // Persist new order
+        setIsSavingOrder(true);
+        const res = await reorderDirectories(localDirs.map(d => d.id));
+        setIsSavingOrder(false);
+        if (!res.success) {
+            toast(res.error || 'Failed to save order', 'error');
+        }
+    }, [localDirs, toast]);
+
+    const handleCopyDockerName = useCallback(async (e: React.MouseEvent, dockerName: string) => {
+        e.preventDefault();
+        e.stopPropagation();
+        await navigator.clipboard.writeText(dockerName);
+        toast('Copied Docker name!', 'success');
+    }, [toast]);
+
+    // ── Icons ───────────────────────────────────────────────────────────────
+
     const TrashIcon = () => (
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /><line x1="10" y1="11" x2="10" y2="17" /><line x1="14" y1="11" x2="14" y2="17" />
         </svg>
     );
 
-    const Spinner = () => (
-        <div className="h-4 w-4 rounded-full border-2 border-slate-500/20 border-t-red-400 animate-spin" />
+    const Spinner = ({ small }: { small?: boolean }) => (
+        <div className={`${small ? 'h-3 w-3' : 'h-4 w-4'} rounded-full border-2 border-slate-500/20 border-t-red-400 animate-spin`} />
     );
 
     const EyeIcon = ({ show }: { show: boolean }) => (
@@ -160,8 +239,31 @@ export default function ClientDashboard({ directories, dbSecrets, currentDirId, 
         </svg>
     );
 
+    const CopyIcon = () => (
+        <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect width="14" height="14" x="8" y="8" rx="2" ry="2" /><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+        </svg>
+    );
+
+    const DragHandle = () => (
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="9" cy="6" r="1" fill="currentColor" /><circle cx="15" cy="6" r="1" fill="currentColor" />
+            <circle cx="9" cy="12" r="1" fill="currentColor" /><circle cx="15" cy="12" r="1" fill="currentColor" />
+            <circle cx="9" cy="18" r="1" fill="currentColor" /><circle cx="15" cy="18" r="1" fill="currentColor" />
+        </svg>
+    );
+
+    // ── Inline preview row ──────────────────────────────────────────────────
+
+    const getLatestVersion = (s: any) => {
+        if (!s.versions || s.versions.length === 0) return null;
+        return [...s.versions].sort((a: any, b: any) => b.version - a.version)[0];
+    };
+
+
+    // ── Main render ─────────────────────────────────────────────────────────
+
     const renderDirectoryView = () => {
-        const dirs = dirTree[currentDirId] || [];
         const secs = secretsByDir[currentDirId] || [];
         const configs = secs.filter((s: any) => s.isConfig);
         const actualSecrets = secs.filter((s: any) => !s.isConfig);
@@ -207,40 +309,59 @@ export default function ClientDashboard({ directories, dbSecrets, currentDirId, 
                     )}
                 </section>
 
-                {/* 2. Subdirectories Grid */}
+                {/* 2. Subdirectories Grid — drag-and-drop */}
                 <section className="space-y-3">
                     <div className="flex items-center justify-between px-2">
                         <h3 className="text-[10px] uppercase tracking-[0.2em] font-bold text-slate-500 flex items-center gap-2">
                             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
                             Directories
-                            {dirs.length > 0 && <span className="bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded ml-1">{dirs.length}</span>}
+                            {localDirs.length > 0 && <span className="bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded ml-1">{localDirs.length}</span>}
+                            {isSavingOrder && (
+                                <span className="flex items-center gap-1 text-slate-600 normal-case font-normal text-[9px]">
+                                    <div className="h-2.5 w-2.5 rounded-full border-2 border-slate-700 border-t-slate-400 animate-spin" />
+                                    saving order…
+                                </span>
+                            )}
                         </h3>
                         <button onClick={() => setShowDirs(!showDirs)} className="text-slate-500 hover:text-slate-300 transition-colors p-1" title={showDirs ? 'Hide' : 'Show'}>
                             <EyeIcon show={showDirs} />
                         </button>
                     </div>
                     {showDirs && (
-                        dirs.length > 0 ? (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-                            {dirs.map((d: any) => (
-                                <div key={d.id} className="group relative flex items-center">
-                                    <Link href={`/directory/${d.id}`} className="flex-1 flex items-center gap-3 text-slate-300 p-4 rounded-2xl bg-slate-900 border border-slate-800/50 hover:border-blue-500/50 hover:bg-slate-800/50 transition-all shadow-lg shadow-black/20">
-                                        <div className="bg-blue-500/10 p-2.5 rounded-xl group-hover:scale-110 transition-transform">
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-blue-400">
-                                                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-                                            </svg>
+                        localDirs.length > 0 ? (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                                {localDirs.map((d: any, index: number) => (
+                                    <div
+                                        key={d.id}
+                                        draggable
+                                        onDragStart={(e) => handleDragStart(e, d.id, index)}
+                                        onDragOver={(e) => handleDragOver(e, d.id)}
+                                        onDragLeave={handleDragLeave}
+                                        onDrop={(e) => handleDrop(e, d.id, index)}
+                                        onDragEnd={handleDragEnd}
+                                        className={`group relative flex items-center transition-all rounded-2xl ${draggingId === d.id ? 'opacity-40 scale-95' : ''} ${dragOverId === d.id ? 'ring-2 ring-blue-500/50 ring-offset-2 ring-offset-slate-950' : ''}`}
+                                    >
+                                        {/* Drag handle */}
+                                        <div className="absolute left-1 top-1/2 -translate-y-1/2 text-slate-700 group-hover:text-slate-500 transition-colors cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 z-10 p-1">
+                                            <DragHandle />
                                         </div>
-                                        <span className="font-bold text-sm truncate">{d.name}</span>
-                                    </Link>
-                                    {canManage && (
-                                        <button onClick={(e) => handleDeleteDir(e, d.id)} disabled={deletingId === d.id}
-                                            className="absolute right-2 p-2 text-slate-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all disabled:opacity-50">
-                                            {deletingId === d.id ? <Spinner /> : <TrashIcon />}
-                                        </button>
-                                    )}
-                                </div>
-                            ))}
-                        </div>
+                                        <Link href={`/directory/${d.id}`} className="flex-1 flex items-center gap-3 text-slate-300 p-4 pl-7 rounded-2xl bg-slate-900 border border-slate-800/50 hover:border-blue-500/50 hover:bg-slate-800/50 transition-all shadow-lg shadow-black/20">
+                                            <div className="bg-blue-500/10 p-2.5 rounded-xl group-hover:scale-110 transition-transform">
+                                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-blue-400">
+                                                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                                                </svg>
+                                            </div>
+                                            <span className="font-bold text-sm truncate">{d.name}</span>
+                                        </Link>
+                                        {canManage && (
+                                            <button onClick={(e) => handleDeleteDir(e, d.id)} disabled={deletingId === d.id}
+                                                className="absolute right-2 p-2 text-slate-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all disabled:opacity-50">
+                                                {deletingId === d.id ? <Spinner /> : <TrashIcon />}
+                                            </button>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
                         ) : (
                             <div className="py-8 text-center text-slate-600 text-[10px] uppercase tracking-widest border border-dashed border-slate-800 rounded-2xl bg-slate-950/30">
                                 No subdirectories
@@ -270,35 +391,67 @@ export default function ClientDashboard({ directories, dbSecrets, currentDirId, 
                                             <thead>
                                                 <tr className="border-b border-slate-800 bg-slate-950/50">
                                                     <th className="text-left py-3 px-4 font-bold text-slate-500 uppercase tracking-tighter">Name</th>
+                                                    <th className="text-left py-3 px-4 font-bold text-slate-500 uppercase tracking-tighter hidden sm:table-cell">Latest Docker Name</th>
+                                                    <th className="text-left py-3 px-4 font-bold text-slate-500 uppercase tracking-tighter hidden md:table-cell">Preview</th>
                                                     <th className="text-left py-3 px-4 font-bold text-slate-500 uppercase tracking-tighter hidden sm:table-cell text-right">Updated</th>
                                                     <th className="py-3 px-4 w-10"></th>
                                                 </tr>
                                             </thead>
                                             <tbody>
-                                                {configs.map((s: any) => (
-                                                    <tr key={s.id} className="group border-b border-slate-800/50 hover:bg-blue-500/[0.03] transition-colors">
-                                                        <td className="py-3 px-4">
-                                                            <Link href={`/secret/${s.id}`} className="flex items-center gap-3">
-                                                                <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center shrink-0">
-                                                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-blue-400">
-                                                                        <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1-1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-                                                                </div>
-                                                                <span className="font-mono text-blue-300 font-medium truncate">{s.name}</span>
-                                                            </Link>
-                                                        </td>
-                                                        <td className="py-3 px-4 text-slate-600 hidden sm:table-cell text-right text-[10px]" suppressHydrationWarning>
-                                                            {new Date(s.updatedAt).toLocaleDateString()}
-                                                        </td>
-                                                        <td className="py-3 px-4 text-right">
-                                                            {canManage && (
-                                                                <button onClick={(e) => handleDeleteSecret(e, s.id)} disabled={deletingId === s.id}
-                                                                    className="p-1.5 text-slate-700 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all">
-                                                                    {deletingId === s.id ? <Spinner /> : <TrashIcon />}
-                                                                </button>
-                                                            )}
-                                                        </td>
-                                                    </tr>
-                                                ))}
+                                                {configs.map((s: any) => {
+                                                    const latest = getLatestVersion(s);
+                                                    return (
+                                                        <tr key={s.id} className="group border-b border-slate-800/50 hover:bg-blue-500/[0.03] transition-colors">
+                                                            <td className="py-3 px-4">
+                                                                <Link href={`/secret/${s.id}`} className="flex items-center gap-3">
+                                                                    <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center shrink-0">
+                                                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-blue-400">
+                                                                            <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>
+                                                                        </svg>
+                                                                    </div>
+                                                                    <span className="font-mono text-blue-300 font-medium truncate">{s.name}</span>
+                                                                </Link>
+                                                            </td>
+                                                            {/* Latest Docker Name with copy */}
+                                                            <td className="py-3 px-4 hidden sm:table-cell">
+                                                                {latest && (
+                                                                    <button
+                                                                        onClick={(e) => handleCopyDockerName(e, latest.dockerName)}
+                                                                        className="group/copy flex items-center gap-1.5 font-mono text-slate-400 hover:text-blue-300 bg-slate-800/40 hover:bg-blue-500/10 border border-transparent hover:border-blue-500/20 px-2 py-1 rounded-lg transition-all cursor-copy text-[10px]"
+                                                                        title="Click to copy Docker name"
+                                                                    >
+                                                                        <CopyIcon />
+                                                                        <span className="truncate max-w-[160px]">{latest.dockerName}</span>
+                                                                    </button>
+                                                                )}
+                                                            </td>
+                                                            {/* Preview popup button */}
+                                                            <td className="py-2 px-4 hidden md:table-cell">
+                                                                {latest && (
+                                                                    <button
+                                                                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setRevealVersion({ ...latest, secret: s }); }}
+                                                                        className="flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-lg transition-all text-slate-500 hover:text-blue-300 bg-slate-800/40 hover:bg-blue-500/10 border border-transparent hover:border-blue-500/20"
+                                                                        title="Preview latest value"
+                                                                    >
+                                                                        <EyeIcon show={false} />
+                                                                        Preview
+                                                                    </button>
+                                                                )}
+                                                            </td>
+                                                            <td className="py-3 px-4 text-slate-600 hidden sm:table-cell text-right text-[10px]" suppressHydrationWarning>
+                                                                {new Date(s.updatedAt).toLocaleDateString()}
+                                                            </td>
+                                                            <td className="py-3 px-4 text-right">
+                                                                {canManage && (
+                                                                    <button onClick={(e) => handleDeleteSecret(e, s.id)} disabled={deletingId === s.id}
+                                                                        className="p-1.5 text-slate-700 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all">
+                                                                        {deletingId === s.id ? <Spinner /> : <TrashIcon />}
+                                                                    </button>
+                                                                )}
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                })}
                                             </tbody>
                                         </table>
                                     </div>
@@ -329,36 +482,67 @@ export default function ClientDashboard({ directories, dbSecrets, currentDirId, 
                                             <thead>
                                                 <tr className="border-b border-slate-800 bg-slate-950/50">
                                                     <th className="text-left py-3 px-4 font-bold text-slate-500 uppercase tracking-tighter">Name</th>
+                                                    <th className="text-left py-3 px-4 font-bold text-slate-500 uppercase tracking-tighter hidden sm:table-cell">Latest Docker Name</th>
+                                                    <th className="text-left py-3 px-4 font-bold text-slate-500 uppercase tracking-tighter hidden md:table-cell">Preview</th>
                                                     <th className="text-left py-3 px-4 font-bold text-slate-500 uppercase tracking-tighter hidden sm:table-cell text-right">Updated</th>
                                                     <th className="py-3 px-4 w-10"></th>
                                                 </tr>
                                             </thead>
                                             <tbody>
-                                                {actualSecrets.map((s: any) => (
-                                                    <tr key={s.id} className="group border-b border-slate-800/50 hover:bg-emerald-500/[0.03] transition-colors">
-                                                        <td className="py-3 px-4">
-                                                            <Link href={`/secret/${s.id}`} className="flex items-center gap-3">
-                                                                <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center shrink-0">
-                                                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-emerald-500">
-                                                                        <rect width="18" height="11" x="3" y="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
-                                                                    </svg>
-                                                                </div>
-                                                                <span className="font-mono text-emerald-400 font-medium truncate">{s.name}</span>
-                                                            </Link>
-                                                        </td>
-                                                        <td className="py-3 px-4 text-slate-600 hidden sm:table-cell text-right text-[10px]" suppressHydrationWarning>
-                                                            {new Date(s.updatedAt).toLocaleDateString()}
-                                                        </td>
-                                                        <td className="py-3 px-4 text-right">
-                                                            {canManage && (
-                                                                <button onClick={(e) => handleDeleteSecret(e, s.id)} disabled={deletingId === s.id}
-                                                                    className="p-1.5 text-slate-700 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all">
-                                                                    {deletingId === s.id ? <Spinner /> : <TrashIcon />}
-                                                                </button>
-                                                            )}
-                                                        </td>
-                                                    </tr>
-                                                ))}
+                                                {actualSecrets.map((s: any) => {
+                                                    const latest = getLatestVersion(s);
+                                                    return (
+                                                        <tr key={s.id} className="group border-b border-slate-800/50 hover:bg-emerald-500/[0.03] transition-colors">
+                                                            <td className="py-3 px-4">
+                                                                <Link href={`/secret/${s.id}`} className="flex items-center gap-3">
+                                                                    <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center shrink-0">
+                                                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-emerald-500">
+                                                                            <rect width="18" height="11" x="3" y="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                                                                        </svg>
+                                                                    </div>
+                                                                    <span className="font-mono text-emerald-400 font-medium truncate">{s.name}</span>
+                                                                </Link>
+                                                            </td>
+                                                            {/* Latest Docker Name with copy */}
+                                                            <td className="py-3 px-4 hidden sm:table-cell">
+                                                                {latest && (
+                                                                    <button
+                                                                        onClick={(e) => handleCopyDockerName(e, latest.dockerName)}
+                                                                        className="group/copy flex items-center gap-1.5 font-mono text-slate-400 hover:text-emerald-300 bg-slate-800/40 hover:bg-emerald-500/10 border border-transparent hover:border-emerald-500/20 px-2 py-1 rounded-lg transition-all cursor-copy text-[10px]"
+                                                                        title="Click to copy Docker name"
+                                                                    >
+                                                                        <CopyIcon />
+                                                                        <span className="truncate max-w-[160px]">{latest.dockerName}</span>
+                                                                    </button>
+                                                                )}
+                                                            </td>
+                                                            {/* Preview popup button */}
+                                                            <td className="py-2 px-4 hidden md:table-cell">
+                                                                {latest && (
+                                                                    <button
+                                                                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setRevealVersion({ ...latest, secret: s }); }}
+                                                                        className="flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-lg transition-all text-slate-500 hover:text-emerald-300 bg-slate-800/40 hover:bg-emerald-500/10 border border-transparent hover:border-emerald-500/20"
+                                                                        title="Preview latest value"
+                                                                    >
+                                                                        <EyeIcon show={false} />
+                                                                        Preview
+                                                                    </button>
+                                                                )}
+                                                            </td>
+                                                            <td className="py-3 px-4 text-slate-600 hidden sm:table-cell text-right text-[10px]" suppressHydrationWarning>
+                                                                {new Date(s.updatedAt).toLocaleDateString()}
+                                                            </td>
+                                                            <td className="py-3 px-4 text-right">
+                                                                {canManage && (
+                                                                    <button onClick={(e) => handleDeleteSecret(e, s.id)} disabled={deletingId === s.id}
+                                                                        className="p-1.5 text-slate-700 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all">
+                                                                        {deletingId === s.id ? <Spinner /> : <TrashIcon />}
+                                                                    </button>
+                                                                )}
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                })}
                                             </tbody>
                                         </table>
                                     </div>
@@ -379,6 +563,10 @@ export default function ClientDashboard({ directories, dbSecrets, currentDirId, 
                 {renderDirectoryView()}
             </div>
 
+            {/* Reveal value modal (preview from listing) */}
+            {revealVersion && (
+                <RevealModal version={revealVersion} onClose={() => setRevealVersion(null)} />
+            )}
 
             {/* Create Directory Modal */}
             {showCreateDirModal && (
@@ -427,7 +615,7 @@ export default function ClientDashboard({ directories, dbSecrets, currentDirId, 
                             </div>
                             <div className="flex-1 flex flex-col overflow-hidden">
                                 <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Secret Value</label>
-                                <CodeView 
+                                <CodeView
                                     value={secValue}
                                     onChange={setSecValue}
                                     editable={true}
@@ -465,7 +653,7 @@ export default function ClientDashboard({ directories, dbSecrets, currentDirId, 
                             </div>
                             <div className="flex-1 flex flex-col overflow-hidden">
                                 <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Config Content</label>
-                                <CodeView 
+                                <CodeView
                                     value={confValue}
                                     onChange={setConfValue}
                                     editable={true}

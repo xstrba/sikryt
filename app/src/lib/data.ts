@@ -25,7 +25,7 @@ export async function getDashboardData() {
         error = err.message || "Failed to connect to Docker socket";
     }
 
-    let directories = await prisma.directory.findMany({ orderBy: { name: 'asc' } });
+    let directories = await prisma.directory.findMany({ orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }] });
     let dbSecrets = await prisma.secret.findMany({
         include: { versions: { orderBy: { version: 'asc' } } },
         orderBy: { name: 'asc' }

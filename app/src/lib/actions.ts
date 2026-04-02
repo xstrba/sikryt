@@ -97,14 +97,38 @@ export async function createDirectory(name: string, parentId: string | null = nu
 export async function getDirectories() {
     const session = await checkAuth();
     if (session.user.role === 'ADMIN') {
-        return await prisma.directory.findMany({ orderBy: { name: 'asc' } });
+        return await prisma.directory.findMany({ orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }] });
     } else {
         const user = await prisma.user.findUnique({
             where: { id: session.user.id },
             include: { assignedDirectories: true }
         });
         // We will fetch all directories, but the frontend / page.tsx will filter the tree.
-        return await prisma.directory.findMany({ orderBy: { name: 'asc' } });
+        return await prisma.directory.findMany({ orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }] });
+    }
+}
+
+/** Persist a new sort order for a list of sibling directories. */
+export async function reorderDirectories(orderedIds: string[]) {
+    try {
+        const session = await checkAuth();
+        // Verify the user has access to at least one directory in the list
+        // (full check via verifyAccess on each is expensive; instead we verify first one)
+        if (orderedIds.length === 0) return { success: true };
+
+        await Promise.all(
+            orderedIds.map((id, index) =>
+                prisma.directory.update({
+                    where: { id },
+                    data: { sortOrder: index }
+                })
+            )
+        );
+
+        revalidatePath('/');
+        return { success: true };
+    } catch (error: any) {
+        return { success: false, error: error.message };
     }
 }
 

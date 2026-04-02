@@ -19,6 +19,7 @@ model Directory {
   id        String      @id @default(cuid())
   name      String
   parentId  String?
+  sortOrder Int         @default(0)
   parent    Directory?  @relation("DirectoryToDirectory", fields: [parentId], references: [id], onDelete: Cascade)
   children  Directory[] @relation("DirectoryToDirectory")
   secrets   Secret[]
