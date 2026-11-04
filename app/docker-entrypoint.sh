@@ -45,10 +45,10 @@ if [ "$TABLE_EXISTS" = "1" ]; then
 fi
 
 echo "Applying Prisma migrations..."
-npx prisma db push --accept-data-loss
+node_modules/.bin/prisma db push --accept-data-loss --skip-generate
 
 echo "Starting Prisma Studio on port 5555..."
-npx prisma studio --port 5555 --hostname 0.0.0.0 &
+node_modules/.bin/prisma studio --port 5555 --hostname 0.0.0.0 --browser none &
 
 echo "Migrating missing nicknames"
 node seed-nicknames.js
@@ -60,4 +60,4 @@ if [ -n "$AUTH_SECRET_FILE" ] && [ -f "$AUTH_SECRET_FILE" ]; then
 fi
 
 echo "Starting Next.js application..."
-exec npm start
+exec node_modules/.bin/next start

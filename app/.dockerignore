@@ -1,0 +1,19 @@
+# Installed / built inside the image
+node_modules
+.next
+out
+
+# Local secrets and environment – never bake into image layers (incl. the public build cache)
+.env
+.env.*
+*.pem
+
+# Not needed for the build
+.git
+*.log
+*.orig
+test-*.js
+test_*.ts
+check-prisma.js
+Dockerfile*
+.dockerignore

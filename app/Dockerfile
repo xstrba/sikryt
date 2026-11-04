@@ -6,12 +6,21 @@ RUN npm ci --legacy-peer-deps
 COPY . .
 RUN npx prisma generate
 RUN npm run build
+# Drop dev-only packages (eslint, typescript, tailwind, …) so they don't ship in the runtime image
+RUN npm prune --omit=dev --legacy-peer-deps
 
 FROM node:24-alpine AS runner
 WORKDIR /app
 
-# Install postgres
-RUN apk add --no-cache postgresql postgresql-contrib su-exec
+# Install postgres and pull in the latest Alpine security patches
+RUN apk upgrade --no-cache \
+    && apk add --no-cache postgresql postgresql-contrib su-exec
+
+# The app runs its binaries directly, so package managers are not needed at runtime.
+# Removing them also removes their bundled dependencies from the vulnerability surface.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+        /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
+        /usr/local/bin/yarn /usr/local/bin/yarnpkg /opt/yarn-*
 
 # Setup postgres directories
 RUN mkdir -p /run/postgresql && chown -R postgres:postgres /run/postgresql
@@ -36,7 +45,7 @@ ENV HOSTNAME=0.0.0.0
 # The database URL for the app to connect to the local postgres instance
 ENV DATABASE_URL="postgresql://sikryt:sikryt_password@127.0.0.1:5432/sikryt_dev?schema=public"
 # In case it needs AUTH_SECRET, it can be provided at runtime
-# ENV AUTH_SECRET="" 
+# ENV AUTH_SECRET=""
 
 EXPOSE 3000 5555
 
