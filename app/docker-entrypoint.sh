@@ -27,17 +27,21 @@ done
 
 echo "Setting up database and user..."
 # Create user and database (ignoring errors if they already exist)
-su-exec postgres psql -c "CREATE USER sikryt WITH PASSWORD 'sikryt_password';" || true
-su-exec postgres psql -c "CREATE DATABASE sikryt_dev OWNER sikryt;" || true
-su-exec postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE sikryt_dev TO sikryt;" || true
+su-exec postgres psql -c "CREATE USER sikryt WITH PASSWORD 'sikryt_password';" 2>/dev/null || true
+su-exec postgres psql -c "CREATE DATABASE sikryt_dev OWNER sikryt;" 2>/dev/null || true
+su-exec postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE sikryt_dev TO sikryt;" 2>/dev/null || true
 
 echo "Checking for nickname migration..."
-# Check if nickname column exists in User table
-COL_EXISTS=$(su-exec postgres psql -d sikryt_dev -tAc "SELECT 1 FROM information_schema.columns WHERE table_name='User' AND column_name='nickname';")
-if [ "$COL_EXISTS" != "1" ]; then
-    echo "Pre-migrating nickname column to avoid data loss errors..."
-    su-exec postgres psql -d sikryt_dev -c "ALTER TABLE \"User\" ADD COLUMN \"nickname\" TEXT;"
-    su-exec postgres psql -d sikryt_dev -c "UPDATE \"User\" SET \"nickname\" = \"email\" WHERE \"nickname\" IS NULL;"
+# Check if User table exists before attempting migration
+TABLE_EXISTS=$(su-exec postgres psql -d sikryt_dev -tAc "SELECT 1 FROM information_schema.tables WHERE table_name='User';")
+if [ "$TABLE_EXISTS" = "1" ]; then
+    # Check if nickname column exists in User table
+    COL_EXISTS=$(su-exec postgres psql -d sikryt_dev -tAc "SELECT 1 FROM information_schema.columns WHERE table_name='User' AND column_name='nickname';")
+    if [ "$COL_EXISTS" != "1" ]; then
+        echo "Pre-migrating nickname column to avoid data loss errors..."
+        su-exec postgres psql -d sikryt_dev -c "ALTER TABLE \"User\" ADD COLUMN \"nickname\" TEXT;"
+        su-exec postgres psql -d sikryt_dev -c "UPDATE \"User\" SET \"nickname\" = \"email\" WHERE \"nickname\" IS NULL;"
+    fi
 fi
 
 echo "Applying Prisma migrations..."
