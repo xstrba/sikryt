@@ -1,14 +1,16 @@
 #!/bin/bash
 set -e
 
-# Check if version is provided
-if [ -z "$1" ]; then
-    echo "Error: Version argument is required."
-    echo "Usage: $0 <version>"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Version: first argument, otherwise the VERSION file in the repo root
+VERSION="${1:-$(tr -d '[:space:]' < VERSION 2>/dev/null)}"
+if [ -z "$VERSION" ]; then
+    echo "Error: No version given and VERSION file is missing or empty."
+    echo "Usage: $0 [version]"
     exit 1
 fi
-
-VERSION=$1
 IMAGE_NAME="xstrba05/sikryt"
 
 echo "🚀 Starting build process for ${IMAGE_NAME}:${VERSION}..."

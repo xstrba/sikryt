@@ -11,7 +11,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - pgdata2:/var/lib/postgresql/data
     restart: unless-stopped
 
   app:
@@ -27,6 +27,8 @@ services:
       - NODE_ENV=development
       - AUTH_SECRET=DPSdIx7f/m3je4bmJnpDGFo0ydeQR3cSp1LruAvrt+k=
       - SYNC_INTERVAL=1
+      # Max login session length in hours (absolute, from sign-in). Default: 6
+      - SESSION_MAX_AGE_HOURS=${SESSION_MAX_AGE_HOURS:-6}
     ports:
       - "3000:3000"
       - "5555:5555"
@@ -49,6 +51,8 @@ services:
       - AUTH_SECRET=DPSdIx7f/m3je4bmJnpDGFo0ydeQR3cSp1LruAvrt+k=
       - AUTH_TRUST_HOST=true
       - AUTH_URL=http://localhost:3000
+      # Max login session length in hours (absolute, from sign-in). Default: 6
+      - SESSION_MAX_AGE_HOURS=${SESSION_MAX_AGE_HOURS:-6}
     ports:
       - "3000:3000"
       - "5555:5555"
@@ -58,5 +62,5 @@ services:
     restart: unless-stopped
 
 volumes:
-  pgdata:
+  pgdata2:
   prod_pgdata:
