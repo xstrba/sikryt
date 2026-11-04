@@ -16,6 +16,11 @@ WORKDIR /app
 RUN apk upgrade --no-cache \
     && apk add --no-cache postgresql postgresql-contrib su-exec
 
+# musl security fix (1.2.6-r6) is only in edge so far. Same upstream 1.2.6, so it is ABI-compatible;
+# the ~1.2.6 constraint keeps it from jumping to a new upstream release. Drop once the base image has it.
+RUN apk add --no-cache --upgrade --repository=https://dl-cdn.alpinelinux.org/alpine/edge/main \
+        'musl~1.2.6' 'musl-utils~1.2.6'
+
 # The app runs its binaries directly, so package managers are not needed at runtime.
 # Removing them also removes their bundled dependencies from the vulnerability surface.
 RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
