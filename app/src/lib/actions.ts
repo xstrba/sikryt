@@ -369,6 +369,37 @@ export async function deleteSecret(secretId: string) {
     }
 }
 
+/**
+ * Decode Docker's multiplexed log stream (non-TTY). Each frame is an 8-byte header
+ * [streamType, 0, 0, 0, size(uint32 BE)] followed by `size` bytes of payload.
+ * Works on raw bytes so payload sizes containing \n / \r bytes and multi-byte UTF-8
+ * characters split across frames are handled correctly.
+ */
+function demuxDockerLogs(raw: unknown): { stdout: string; stderr: string } {
+    const buf = Buffer.isBuffer(raw) ? raw : Buffer.from(String(raw ?? ''), 'binary');
+    const out: Buffer[] = [];
+    const err: Buffer[] = [];
+    let offset = 0;
+    while (offset + 8 <= buf.length) {
+        const streamType = buf[offset];
+        const size = buf.readUInt32BE(offset + 4);
+        // Not a valid multiplexed header (e.g. TTY mode) – treat the remainder as plain stdout
+        if (streamType > 2 || buf[offset + 1] !== 0 || buf[offset + 2] !== 0 || buf[offset + 3] !== 0) {
+            out.push(buf.subarray(offset));
+            offset = buf.length;
+            break;
+        }
+        const payload = buf.subarray(offset + 8, offset + 8 + size);
+        (streamType === 2 ? err : out).push(payload);
+        offset += 8 + size;
+    }
+    if (offset < buf.length) out.push(buf.subarray(offset));
+    return {
+        stdout: Buffer.concat(out).toString('utf8'),
+        stderr: Buffer.concat(err).toString('utf8'),
+    };
+}
+
 /** Read the raw plaintext value of a specific Docker secret via a temporary Swarm service */
 export async function readSecretValue(dockerId: string, dockerName: string) {
     try {
@@ -432,12 +463,16 @@ export async function readSecretValue(dockerId: string, dockerName: string) {
         });
 
         let extractedLog = '';
+        let stderrLog = '';
         while (true) {
             const tasks = await docker.listTasks({ filters: { service: [serviceName] } });
             if (tasks.length > 0 && ['complete', 'failed', 'rejected'].includes(tasks[0].Status.State)) {
                 try {
-                    const stream = await service.logs({ stdout: true, stderr: true });
-                    extractedLog = (stream as any).toString('utf8').replace(/^[\u0000-\u0007].{7}/gm, '').trim();
+                    const raw = await service.logs({ stdout: true, stderr: true });
+                    const { stdout, stderr } = demuxDockerLogs(raw);
+                    // Docker terminates the last log line with a newline even if the file didn't have one
+                    extractedLog = stdout.replace(/\n$/, '');
+                    stderrLog = stderr.trim();
                 } catch { /* ignore log errors */ }
                 break;
             }
@@ -445,6 +480,9 @@ export async function readSecretValue(dockerId: string, dockerName: string) {
         }
 
         await service.remove();
+        if (!extractedLog && stderrLog) {
+            return { success: false, error: stderrLog };
+        }
         return { success: true, value: extractedLog };
     } catch (error: any) {
         console.error('Failed to read secret value:', error);
