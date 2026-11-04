@@ -18,5 +18,7 @@ declare module "next-auth" {
 declare module "next-auth/jwt" {
     interface JWT {
         role?: "ADMIN" | "USER";
+        /** Unix timestamp (seconds) of the sign-in that issued this token */
+        loginAt?: number;
     }
 }
