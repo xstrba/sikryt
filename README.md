@@ -83,8 +83,8 @@ in their profile right away.
 | `SYNC_INTERVAL` | `10` | How often (in minutes) to sync secrets created outside Sikryt. |
 | `MANAGER_ONLY` | `false` | By default the temporary "reveal" service is placed on worker nodes. Set to `true` to allow any node, including managers — required for single-node swarms. |
 
-Port `5555` additionally serves Prisma Studio (a raw database browser) inside the container — don't
-publish it publicly.
+Database migrations run automatically on every start, so upgrading is just a matter of running the
+newer image on the same `sikryt_data` volume.
 
 ## Local development
 
@@ -104,6 +104,19 @@ docker exec sikryt_app node seed-user.js admin@example.com 'password' admin Admi
 ```
 
 Tech stack: Next.js, NextAuth, Prisma + PostgreSQL, CodeMirror, dockerode.
+
+### Changing the database schema
+
+Edit [`app/prisma/schema.prisma`](app/prisma/schema.prisma), then create a migration in the dev container:
+
+```bash
+docker exec -it sikryt_app npx prisma migrate dev --name describe_your_change
+```
+
+This writes `app/prisma/migrations/<timestamp>_describe_your_change/migration.sql` and applies it to the dev
+database. Commit the migration together with the schema change. The production image doesn't include the
+Prisma CLI; its entrypoint applies new migrations with a small `psql`-based runner ([`app/migrate.sh`](app/migrate.sh))
+that records them in the same `_prisma_migrations` table.
 
 ## Releases
 

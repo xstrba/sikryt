@@ -55,7 +55,6 @@ services:
       - SESSION_MAX_AGE_HOURS=${SESSION_MAX_AGE_HOURS:-6}
     ports:
       - "3000:3000"
-      - "5555:5555"
     volumes:
       - prod_pgdata:/var/lib/postgresql/data
       - /var/run/docker.sock:/var/run/docker.sock

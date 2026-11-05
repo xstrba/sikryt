@@ -31,27 +31,10 @@ su-exec postgres psql -c "CREATE USER sikryt WITH PASSWORD 'sikryt_password';" 2
 su-exec postgres psql -c "CREATE DATABASE sikryt_dev OWNER sikryt;" 2>/dev/null || true
 su-exec postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE sikryt_dev TO sikryt;" 2>/dev/null || true
 
-echo "Checking for nickname migration..."
-# Check if User table exists before attempting migration
-TABLE_EXISTS=$(su-exec postgres psql -d sikryt_dev -tAc "SELECT 1 FROM information_schema.tables WHERE table_name='User';")
-if [ "$TABLE_EXISTS" = "1" ]; then
-    # Check if nickname column exists in User table
-    COL_EXISTS=$(su-exec postgres psql -d sikryt_dev -tAc "SELECT 1 FROM information_schema.columns WHERE table_name='User' AND column_name='nickname';")
-    if [ "$COL_EXISTS" != "1" ]; then
-        echo "Pre-migrating nickname column to avoid data loss errors..."
-        su-exec postgres psql -d sikryt_dev -c "ALTER TABLE \"User\" ADD COLUMN \"nickname\" TEXT;"
-        su-exec postgres psql -d sikryt_dev -c "UPDATE \"User\" SET \"nickname\" = \"email\" WHERE \"nickname\" IS NULL;"
-    fi
-fi
-
-echo "Applying Prisma migrations..."
-node_modules/.bin/prisma db push --accept-data-loss --skip-generate
-
-echo "Starting Prisma Studio on port 5555..."
-node_modules/.bin/prisma studio --port 5555 --hostname 0.0.0.0 --browser none &
-
-echo "Migrating missing nicknames"
-node seed-nicknames.js
+echo "Applying database migrations..."
+# Plain-psql migration runner (see migrate.sh); also brings databases created by
+# `prisma db push` in releases before 1.2.0 up to the current schema.
+/app/migrate.sh /app/prisma/migrations
 
 if [ -n "$AUTH_SECRET_FILE" ] && [ -f "$AUTH_SECRET_FILE" ]; then
     echo "Reading AUTH_SECRET from file..."
@@ -60,4 +43,4 @@ if [ -n "$AUTH_SECRET_FILE" ] && [ -f "$AUTH_SECRET_FILE" ]; then
 fi
 
 echo "Starting Next.js application..."
-exec node_modules/.bin/next start
+exec node /app/server.js

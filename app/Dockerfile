@@ -6,8 +6,12 @@ RUN npm ci --legacy-peer-deps
 COPY . .
 RUN npx prisma generate
 RUN npm run build
-# Drop dev-only packages (eslint, typescript, tailwind, …) so they don't ship in the runtime image
-RUN npm prune --omit=dev --legacy-peer-deps
+# Prisma ships WASM/edge engines for every database; on Node only runtime/library.js and the native
+# libquery_engine-*.so.node are used, so drop the rest from the standalone bundle (~45 MB).
+RUN cd .next/standalone/node_modules \
+    && rm -f @prisma/client/runtime/query_engine_bg.* @prisma/client/runtime/query_compiler_bg.* \
+        @prisma/client/runtime/wasm-* @prisma/client/runtime/edge* @prisma/client/runtime/react-native* \
+        .prisma/client/query_engine_bg.* .prisma/client/wasm*
 
 FROM node:24-alpine AS runner
 WORKDIR /app
@@ -31,18 +35,19 @@ RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack 
 RUN mkdir -p /run/postgresql && chown -R postgres:postgres /run/postgresql
 RUN mkdir -p /var/lib/postgresql/data && chown -R postgres:postgres /var/lib/postgresql
 
-COPY --from=builder /app/package.json ./package.json
-COPY --from=builder /app/package-lock.json ./package-lock.json
-COPY --from=builder /app/next.config.ts ./next.config.ts
-COPY --from=builder /app/.next ./.next
+# Next.js standalone server: server.js + only the node_modules files it actually uses
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
-COPY --from=builder /app/prisma ./prisma
-COPY --from=builder /app/node_modules ./node_modules
+# SQL migrations (applied by migrate.sh) and the admin seeding script
+COPY --from=builder /app/prisma/migrations ./prisma/migrations
 COPY --from=builder /app/seed-user.js ./seed-user.js
-COPY --from=builder /app/seed-nicknames.js ./seed-nicknames.js
+# seed-user.js require()s bcryptjs (CJS build); the app itself only uses its bundled ESM build
+COPY --from=builder /app/node_modules/bcryptjs ./node_modules/bcryptjs
+COPY migrate.sh ./migrate.sh
 
 COPY docker-entrypoint.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh /app/migrate.sh
 
 ENV NODE_ENV=production
 ENV PORT=3000
@@ -52,6 +57,6 @@ ENV DATABASE_URL="postgresql://sikryt:sikryt_password@127.0.0.1:5432/sikryt_dev?
 # In case it needs AUTH_SECRET, it can be provided at runtime
 # ENV AUTH_SECRET=""
 
-EXPOSE 3000 5555
+EXPOSE 3000
 
 CMD ["docker-entrypoint.sh"]
